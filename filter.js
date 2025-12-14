@@ -20,8 +20,9 @@
  *   - Change data_encr subsets (CONFIG.dataEncr)
  * 
  * VALIDATION:
- *   Clients are skipped entirely if any required nested object is missing.
- *   Skipped clients are logged to results.txt with the specific missing field.
+ *   - Pregnancies are validated individually against CONFIG.required
+ *   - Invalid pregnancies are removed from the client but logged to results.txt
+ *   - Clients are skipped only if they have no valid pregnancies remaining
  */
 
 const fs = require('fs');
@@ -35,9 +36,9 @@ const CONFIG = {
   // Required fields validation - skip client if any of these are missing/null/empty
   // Adjust this section to change what makes a client valid
   required: {
-    client: ['pregnancies'],           // must have pregnancies array (non-empty)
-    pregnancy: ['birth'],              // birth must not be null
-    birth: ['children'],               // children array must exist and be non-empty
+    client: ['pregnancies'],           
+    pregnancy: ['birth', 'cares_after', 'cares_after_phone'],  
+    birth: ['children'],
   },
 
   // Property whitelists per entity type
@@ -170,6 +171,34 @@ function validateEntity(entity, requiredFields, checkArrayNonEmpty = false) {
 }
 
 /**
+ * Validate a single pregnancy against required fields defined in CONFIG.required
+ * Returns { valid: boolean, reason: string | null }
+ */
+function validatePregnancy(pregnancy) {
+  // Check pregnancy-level required fields (arrays must be non-empty)
+  const pregnancyValidation = validateEntity(pregnancy, CONFIG.required.pregnancy, true);
+  if (!pregnancyValidation.valid) {
+    return { 
+      valid: false, 
+      reason: `Missing required field 'pregnancy.${pregnancyValidation.missingField}' (defined in CONFIG.required.pregnancy)` 
+    };
+  }
+  
+  // Check birth-level required fields (children must be non-empty array)
+  if (pregnancy.birth) {
+    const birthValidation = validateEntity(pregnancy.birth, CONFIG.required.birth, true);
+    if (!birthValidation.valid) {
+      return { 
+        valid: false, 
+        reason: `Missing required field 'birth.${birthValidation.missingField}' (defined in CONFIG.required.birth)` 
+      };
+    }
+  }
+
+  return { valid: true, reason: null };
+}
+
+/**
  * Validate a client object against required fields defined in CONFIG.required
  * Returns { valid: boolean, reason: string | null }
  */
@@ -181,31 +210,6 @@ function validateClient(client) {
       valid: false, 
       reason: `Missing required field 'client.${clientValidation.missingField}' (defined in CONFIG.required.client)` 
     };
-  }
-
-  // Check each pregnancy against required fields
-  for (let i = 0; i < client.pregnancies.length; i++) {
-    const pregnancy = client.pregnancies[i];
-    
-    // Check pregnancy-level required fields
-    const pregnancyValidation = validateEntity(pregnancy, CONFIG.required.pregnancy);
-    if (!pregnancyValidation.valid) {
-      return { 
-        valid: false, 
-        reason: `Pregnancy[${i}] (id: ${pregnancy.id}): Missing required field 'pregnancy.${pregnancyValidation.missingField}' (defined in CONFIG.required.pregnancy)` 
-      };
-    }
-    
-    // Check birth-level required fields (children must be non-empty array)
-    if (pregnancy.birth) {
-      const birthValidation = validateEntity(pregnancy.birth, CONFIG.required.birth, true);
-      if (!birthValidation.valid) {
-        return { 
-          valid: false, 
-          reason: `Pregnancy[${i}] (id: ${pregnancy.id}): Missing required field 'birth.${birthValidation.missingField}' (defined in CONFIG.required.birth)` 
-        };
-      }
-    }
   }
 
   return { valid: true, reason: null };
@@ -300,8 +304,10 @@ function processData(inputData) {
   const results = {
     totalClients: 0,
     successCount: 0,
-    skippedCount: 0,
+    skippedClientsCount: 0,
     skippedClients: [],
+    skippedPregnanciesCount: 0,
+    skippedPregnancies: [],
   };
   
   const outputData = [];
@@ -314,19 +320,51 @@ function processData(inputData) {
   results.totalClients = inputData.length;
   
   for (const client of inputData) {
-    const validation = validateClient(client);
+    // First check client-level validation
+    const clientValidation = validateClient(client);
     
-    if (validation.valid) {
-      const filteredClient = filterClient(client);
-      outputData.push(filteredClient);
-      results.successCount++;
-    } else {
-      results.skippedCount++;
+    if (!clientValidation.valid) {
+      results.skippedClientsCount++;
       results.skippedClients.push({
         id: client.id,
-        reason: validation.reason,
+        reason: clientValidation.reason,
       });
+      continue;
     }
+    
+    // Validate each pregnancy and filter out invalid ones
+    const validPregnancies = [];
+    
+    for (const pregnancy of client.pregnancies) {
+      const pregnancyValidation = validatePregnancy(pregnancy);
+      
+      if (pregnancyValidation.valid) {
+        validPregnancies.push(pregnancy);
+      } else {
+        results.skippedPregnanciesCount++;
+        results.skippedPregnancies.push({
+          clientId: client.id,
+          pregnancyId: pregnancy.id,
+          reason: pregnancyValidation.reason,
+        });
+      }
+    }
+    
+    // If no valid pregnancies remain, skip the entire client
+    if (validPregnancies.length === 0) {
+      results.skippedClientsCount++;
+      results.skippedClients.push({
+        id: client.id,
+        reason: 'No valid pregnancies remaining after validation',
+      });
+      continue;
+    }
+    
+    // Create a modified client with only valid pregnancies
+    const clientWithValidPregnancies = { ...client, pregnancies: validPregnancies };
+    const filteredClient = filterClient(clientWithValidPregnancies);
+    outputData.push(filteredClient);
+    results.successCount++;
   }
   
   return { outputData, results };
@@ -345,9 +383,22 @@ function generateResultsReport(results) {
     '-'.repeat(60),
     `Total Clients Processed: ${results.totalClients}`,
     `Successfully Transformed: ${results.successCount}`,
-    `Skipped (Invalid): ${results.skippedCount}`,
+    `Skipped Clients: ${results.skippedClientsCount}`,
+    `Skipped Pregnancies: ${results.skippedPregnanciesCount}`,
     '',
   ];
+  
+  if (results.skippedPregnancies.length > 0) {
+    lines.push('-'.repeat(60));
+    lines.push('SKIPPED PREGNANCIES');
+    lines.push('-'.repeat(60));
+    
+    for (const skipped of results.skippedPregnancies) {
+      lines.push(`  Client ID: ${skipped.clientId}, Pregnancy ID: ${skipped.pregnancyId}`);
+      lines.push(`    Reason: ${skipped.reason}`);
+      lines.push('');
+    }
+  }
   
   if (results.skippedClients.length > 0) {
     lines.push('-'.repeat(60));
@@ -426,7 +477,8 @@ function main() {
   console.log('Processing complete!');
   console.log(`  Total clients: ${results.totalClients}`);
   console.log(`  Transformed: ${results.successCount}`);
-  console.log(`  Skipped: ${results.skippedCount}`);
+  console.log(`  Skipped clients: ${results.skippedClientsCount}`);
+  console.log(`  Skipped pregnancies: ${results.skippedPregnanciesCount}`);
 }
 
 main();
