@@ -7,7 +7,12 @@
  * removing sensitive/personal information while preserving the nested data structure.
  * 
  * USAGE:
- *   node filter.js <input.json> <output.json>
+ *   node filter.js <input.json|input_folder/> <output.json>
+ * 
+ *   Input can be either:
+ *   - A single JSON file: node filter.js data.json output.json
+ *   - A directory with multiple JSON files: node filter.js data_folder/ output.json
+ *     (All .json files in the directory will be combined into one output)
  * 
  * OUTPUTS:
  *   - <output.json>  : Filtered dataset with only whitelisted properties
@@ -609,9 +614,13 @@ function main() {
   const args = process.argv.slice(2);
   
   if (args.length < 2) {
-    console.log('Usage: node filter.js <input.json> <output.json>');
+    console.log('Usage: node filter.js <input.json|input_folder/> <output.json>');
     console.log('');
     console.log('This script filters pregnancy data to keep only statistical fields.');
+    console.log('Input can be either:');
+    console.log('  - A single JSON file');
+    console.log('  - A directory containing multiple JSON files (will be combined)');
+    console.log('');
     console.log('A results.txt file will be generated alongside the output file.');
     process.exit(1);
   }
@@ -620,14 +629,67 @@ function main() {
   const outputPath = path.resolve(args[1]);
   const resultsPath = path.join(path.dirname(outputPath), 'results.txt');
   
-  // Read input file
-  console.log(`Reading input file: ${inputPath}`);
-  let inputData;
+  // Check if input is a file or directory
+  let inputData = [];
+  let stats;
+  
   try {
-    const rawData = fs.readFileSync(inputPath, 'utf8');
-    inputData = JSON.parse(rawData);
+    stats = fs.statSync(inputPath);
   } catch (err) {
-    console.error(`Error reading input file: ${err.message}`);
+    console.error(`Error accessing input path: ${err.message}`);
+    process.exit(1);
+  }
+  
+  if (stats.isDirectory()) {
+    // Read all .json files from directory
+    console.log(`Reading JSON files from directory: ${inputPath}`);
+    try {
+      const files = fs.readdirSync(inputPath);
+      const jsonFiles = files.filter(file => file.endsWith('.json'));
+      
+      if (jsonFiles.length === 0) {
+        console.error('No JSON files found in the directory');
+        process.exit(1);
+      }
+      
+      console.log(`Found ${jsonFiles.length} JSON file(s)`);
+      
+      for (const file of jsonFiles) {
+        const filePath = path.join(inputPath, file);
+        console.log(`  Reading: ${file}`);
+        try {
+          const rawData = fs.readFileSync(filePath, 'utf8');
+          const fileData = JSON.parse(rawData);
+          
+          // Ensure fileData is an array and append to inputData
+          if (Array.isArray(fileData)) {
+            inputData = inputData.concat(fileData);
+          } else {
+            console.warn(`  Warning: ${file} does not contain an array, skipping`);
+          }
+        } catch (err) {
+          console.error(`  Error reading ${file}: ${err.message}`);
+        }
+      }
+      
+      console.log(`Combined ${inputData.length} total clients from all files`);
+      
+    } catch (err) {
+      console.error(`Error reading directory: ${err.message}`);
+      process.exit(1);
+    }
+  } else if (stats.isFile()) {
+    // Read single input file
+    console.log(`Reading input file: ${inputPath}`);
+    try {
+      const rawData = fs.readFileSync(inputPath, 'utf8');
+      inputData = JSON.parse(rawData);
+    } catch (err) {
+      console.error(`Error reading input file: ${err.message}`);
+      process.exit(1);
+    }
+  } else {
+    console.error('Input path must be a file or directory');
     process.exit(1);
   }
   
