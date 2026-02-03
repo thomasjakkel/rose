@@ -45,47 +45,36 @@ const CONFIG = {
   whitelist: {
     client: ['id', 'pregnancies'],
     
-    pregnancy: [
-      'id', 'id_client', 'data_encr', 'expected_birth_date',
-      'birth', 'cares_after', 'cares_after_phone'
-    ],
+    // Pregnancy properties - flattened structure
+    pregnancy: ['id', 'cares_after', 'cares_after_phone'],
     
-    birth: ['id', 'id_pregnancy', 'data_encr', 'children'],
-    
-    child: [
-      'id', 'id_birth', 'date_birth', 'data_encr',
-      'created_at', 'updated_at', 'deleted_at',
-      'created_by', 'updated_by', 'in_dashboard',
-      'pregnancy_id', 'client_id'
-    ],
-    
-    careAfter: ['id', 'id_pregnancy', 'data_encr', 'date_start', 'date_end'],
+    // CareAfter properties - flattened data_encr
+    careAfter: ['id', 'date_start', 'date_end'],
     
     careAfterPhone: [
-      'id', 'id_user', 'id_pregnancy',
-      'date_start', 'date_end', 'is_breast_feeding'
+      'id', 'date_start', 'date_end', 'is_breast_feeding'
     ],
   },
 
-  // data_encr property subsets per entity type
-  dataEncr: {
-    pregnancy: ['fields-type', 'egt', 'grav', 'para', 'stillwunsch'],
+  // Properties to extract and flatten from nested objects
+  flatten: {
+    // Extract from pregnancy.data_encr and add to pregnancy level
+    pregnancyDataEncr: ['grav', 'para'],
     
-    birth: ['fields-type', 'geburts-modus', 'blutverlust', 'mother-entlassungdatum'],
+    // Extract from pregnancy.birth.data_encr and add to pregnancy level
+    // Map old names to new names: 'old-name': 'new-name'
+    birthDataEncr: {
+      'geburts-modus': 'birth_mode',
+      'blutverlust': 'blood_loss',
+      'mother-entlassungdatum': 'discharge_date'
+    },
     
-    child: ['fields-type', 'birth_date', 'birth_time'],
-    
-    // For careAfter, also keep specific 'kind-{id}-*' pattern keys
-    careAfter: [
-      'stillt', 'child-tab', 'ibds-left', 'ibds-right',
-      'care_length', 'is_first_care', 'laktierend-left', 'laktierend-right',
-      'regelrechtes-wochenbett'
-    ],
+    // Extract from cares_after.data_encr and add to cares_after level
+    careAfterDataEncr: ['stillt', 'is_first_care', 'primar-abgestillt', 'abgestillt', 'stillt-teilweise', 'frau-pumpt-ab'],
     
     // Dynamic patterns for careAfter data_encr (use {id} as placeholder for child ID)
     careAfterDynamicPatterns: [
-      'kind-{id}-nahrung',
-      'kind-{id}-physiologisches-neugeborenes'
+      'kind-{id}-nahrung'
     ],
   },
 };
@@ -113,19 +102,34 @@ function pickProperties(obj, keys) {
  * Filter data_encr object, keeping only allowed keys
  * Optionally keeps keys matching specific suffix patterns (e.g., 'kind-{id}-nahrung')
  */
-function filterDataEncr(dataEncr, allowedKeys, dynamicPatterns = null) {
-  if (!dataEncr || typeof dataEncr !== 'object') return dataEncr;
+/**
+ * Extract specific properties from data_encr object
+ * Supports both array format and object format (for renaming)
+ */
+function extractDataEncrProperties(dataEncr, allowedKeysOrMap, dynamicPatterns = null) {
+  if (!dataEncr || typeof dataEncr !== 'object') return {};
   
   const result = {};
   
+  // Check if allowedKeysOrMap is an object (mapping) or array (simple list)
+  const isMapping = !Array.isArray(allowedKeysOrMap);
+  
   for (const key of Object.keys(dataEncr)) {
-    // Check if key is in allowed list
-    if (allowedKeys.includes(key)) {
-      result[key] = dataEncr[key];
-    }
-    // Check if key matches dynamic patterns (e.g., 'kind-{id}-nahrung', 'kind-{id}-physiologisches-neugeborenes')
-    else if (dynamicPatterns && dynamicPatterns.some(pattern => matchesDynamicPattern(key, pattern))) {
-      result[key] = dataEncr[key];
+    if (isMapping) {
+      // Object format: { 'old-name': 'new-name' }
+      if (key in allowedKeysOrMap) {
+        const newKey = allowedKeysOrMap[key];
+        result[newKey] = dataEncr[key];
+      }
+    } else {
+      // Array format: ['key1', 'key2']
+      if (allowedKeysOrMap.includes(key)) {
+        result[key] = dataEncr[key];
+      }
+      // Check if key matches dynamic patterns
+      else if (dynamicPatterns && dynamicPatterns.some(pattern => matchesDynamicPattern(key, pattern))) {
+        result[key] = dataEncr[key];
+      }
     }
   }
   
@@ -150,6 +154,32 @@ function isValidValue(value, checkNonEmptyArray = false) {
   if (value === null || value === undefined) return false;
   if (checkNonEmptyArray && Array.isArray(value) && value.length === 0) return false;
   return true;
+}
+
+/**
+ * Parse date string that can be in multiple formats and convert to ISO format
+ * Supports: 'DD.MM.YYYY HH:MM', 'YYYY-MM-DD HH:MM:SS', etc.
+ * Returns: ISO format string 'YYYY-MM-DD HH:MM:SS' or null
+ */
+function parseAndConvertDate(dateString) {
+  if (!dateString) return null;
+  
+  try {
+    // Check if it's German format: DD.MM.YYYY HH:MM
+    const germanFormat = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/;
+    const match = dateString.match(germanFormat);
+    
+    if (match) {
+      const [, day, month, year, hours, minutes] = match;
+      // Convert to ISO format: YYYY-MM-DD HH:MM:SS
+      return `${year}-${month}-${day} ${hours}:${minutes}:00`;
+    }
+    
+    // Already in standard format, return as-is
+    return dateString;
+  } catch (e) {
+    return null;
+  }
 }
 
 // =============================================================================
@@ -193,6 +223,16 @@ function validatePregnancy(pregnancy) {
         reason: `Missing required field 'birth.${birthValidation.missingField}' (defined in CONFIG.required.birth)` 
       };
     }
+    
+    // Check that children array has exactly one child
+    if (pregnancy.birth.children && Array.isArray(pregnancy.birth.children)) {
+      if (pregnancy.birth.children.length !== 1) {
+        return {
+          valid: false,
+          reason: `Birth has ${pregnancy.birth.children.length} children (expected exactly 1 child)`
+        };
+      }
+    }
   }
 
   return { valid: true, reason: null };
@@ -219,68 +259,189 @@ function validateClient(client) {
 // FILTER FUNCTIONS
 // =============================================================================
 
-function filterCareAfterPhone(careAfterPhone) {
-  return pickProperties(careAfterPhone, CONFIG.whitelist.careAfterPhone);
+function filterCareAfterPhone(careAfterPhone, dateBirth, dischargeDate) {
+  const filtered = pickProperties(careAfterPhone, CONFIG.whitelist.careAfterPhone);
+  
+  // Calculate duration_of_visit in minutes
+  if (filtered.date_start && filtered.date_end) {
+    const startTime = new Date(filtered.date_start);
+    const endTime = new Date(filtered.date_end);
+    if (startTime && endTime && !isNaN(startTime) && !isNaN(endTime)) {
+      const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
+      filtered.duration_of_visit = durationMinutes;
+    }
+  }
+  
+  // Calculate age_of_child in hours (time between birth and visit start)
+  if (dateBirth && filtered.date_start) {
+    const birthTime = new Date(dateBirth);
+    const visitStartTime = new Date(filtered.date_start);
+    if (birthTime && visitStartTime && !isNaN(birthTime) && !isNaN(visitStartTime)) {
+      const ageHours = Math.round((visitStartTime - birthTime) / 1000 / 60 / 60);
+      filtered.age_of_child = ageHours;
+    }
+  }
+  
+  // Calculate time_since_discharge in hours (time between discharge and visit start)
+  if (dischargeDate && filtered.date_start) {
+    const dischargeTime = new Date(dischargeDate);
+    const visitStartTime = new Date(filtered.date_start);
+    if (dischargeTime && visitStartTime && !isNaN(dischargeTime) && !isNaN(visitStartTime)) {
+      const hoursSinceDischarge = Math.round((visitStartTime - dischargeTime) / 1000 / 60 / 60);
+      filtered.time_since_discharge = hoursSinceDischarge;
+    }
+  }
+  
+  return filtered;
 }
 
-function filterCareAfter(careAfter) {
+function filterCareAfter(careAfter, dateBirth, dischargeDate, pregnancyId) {
+  // Pick basic properties
   const filtered = pickProperties(careAfter, CONFIG.whitelist.careAfter);
+  const careAfterId = careAfter.id;
   
-  if (filtered.data_encr) {
-    // Keep allowed keys + specific 'kind-{id}-*' pattern keys
-    filtered.data_encr = filterDataEncr(
-      filtered.data_encr,
-      CONFIG.dataEncr.careAfter,
-      CONFIG.dataEncr.careAfterDynamicPatterns
+  // Extract and flatten data_encr properties
+  if (careAfter.data_encr) {
+    const dataEncrProps = extractDataEncrProperties(
+      careAfter.data_encr,
+      CONFIG.flatten.careAfterDataEncr,
+      CONFIG.flatten.careAfterDynamicPatterns
     );
+    
+    // Rename kind-{id}-nahrung to baby_food
+    for (const key of Object.keys(dataEncrProps)) {
+      if (key.match(/^kind-\d+-nahrung$/)) {
+        dataEncrProps.baby_food = dataEncrProps[key];
+        delete dataEncrProps[key];
+      }
+    }
+    
+    // Determine breastfeed_type based on which property is set
+    const breastfeedingProps = ['stillt', 'primar-abgestillt', 'abgestillt', 'stillt-teilweise', 'frau-pumpt-ab'];
+    const foundProps = [];
+    
+    for (const prop of breastfeedingProps) {
+      if (dataEncrProps[prop]) {
+        foundProps.push(prop);
+      }
+    }
+    
+    // Use default if none or multiple properties are set
+    if (foundProps.length === 1) {
+      dataEncrProps.breastfeed_type = foundProps[0];
+    } else {
+      dataEncrProps.breastfeed_type = 'stillt-teilweise';
+      // Track default usage
+      if (typeof filterCareAfter.defaultBreastfeedCount === 'undefined') {
+        filterCareAfter.defaultBreastfeedCount = 0;
+        filterCareAfter.defaultBreastfeedEntries = [];
+      }
+      filterCareAfter.defaultBreastfeedCount++;
+      if (pregnancyId && careAfterId) {
+        filterCareAfter.defaultBreastfeedEntries.push({
+          pregnancyId: pregnancyId,
+          careAfterId: careAfterId
+        });
+      }
+    }
+    
+    // Remove individual breastfeeding properties, keep only breastfeed_type
+    for (const prop of breastfeedingProps) {
+      delete dataEncrProps[prop];
+    }
+    
+    // Merge flattened properties into filtered object
+    Object.assign(filtered, dataEncrProps);
+  }
+  
+  // Calculate duration_of_visit in minutes
+  if (filtered.date_start && filtered.date_end) {
+    const startTime = new Date(filtered.date_start);
+    const endTime = new Date(filtered.date_end);
+    if (startTime && endTime && !isNaN(startTime) && !isNaN(endTime)) {
+      const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
+      filtered.duration_of_visit = durationMinutes;
+    }
+  }
+  
+  // Calculate age_of_child in hours (time between birth and visit start)
+  if (dateBirth && filtered.date_start) {
+    const birthTime = new Date(dateBirth);
+    const visitStartTime = new Date(filtered.date_start);
+    if (birthTime && visitStartTime && !isNaN(birthTime) && !isNaN(visitStartTime)) {
+      const ageHours = Math.round((visitStartTime - birthTime) / 1000 / 60 / 60);
+      filtered.age_of_child = ageHours;
+    }
+  }
+  
+  // Calculate time_since_discharge in hours (time between discharge and visit start)
+  if (dischargeDate && filtered.date_start) {
+    const dischargeTime = new Date(dischargeDate);
+    const visitStartTime = new Date(filtered.date_start);
+    if (dischargeTime && visitStartTime && !isNaN(dischargeTime) && !isNaN(visitStartTime)) {
+      const hoursSinceDischarge = Math.round((visitStartTime - dischargeTime) / 1000 / 60 / 60);
+      filtered.time_since_discharge = hoursSinceDischarge;
+    }
   }
   
   return filtered;
 }
 
 function filterChild(child) {
-  const filtered = pickProperties(child, CONFIG.whitelist.child);
-  
-  if (filtered.data_encr) {
-    filtered.data_encr = filterDataEncr(filtered.data_encr, CONFIG.dataEncr.child);
-  }
-  
-  return filtered;
-}
-
-function filterBirth(birth) {
-  if (!birth) return null;
-  
-  const filtered = pickProperties(birth, CONFIG.whitelist.birth);
-  
-  if (filtered.data_encr) {
-    filtered.data_encr = filterDataEncr(filtered.data_encr, CONFIG.dataEncr.birth);
-  }
-  
-  if (filtered.children && Array.isArray(filtered.children)) {
-    filtered.children = filtered.children.map(filterChild);
-  }
-  
-  return filtered;
+  return pickProperties(child, CONFIG.whitelist.child);
 }
 
 function filterPregnancy(pregnancy) {
-  const filtered = pickProperties(pregnancy, CONFIG.whitelist.pregnancy);
+  // Create result object with properties in specific order
+  const filtered = {};
   
-  if (filtered.data_encr) {
-    filtered.data_encr = filterDataEncr(filtered.data_encr, CONFIG.dataEncr.pregnancy);
+  // 1. Add pregnancy id first
+  filtered.id = pregnancy.id;
+  
+  // 2. Extract and flatten pregnancy.data_encr properties (grav, para)
+  if (pregnancy.data_encr) {
+    const pregnancyDataEncrProps = extractDataEncrProperties(
+      pregnancy.data_encr,
+      CONFIG.flatten.pregnancyDataEncr
+    );
+    Object.assign(filtered, pregnancyDataEncrProps);
   }
   
-  if (filtered.birth) {
-    filtered.birth = filterBirth(filtered.birth);
+  // 3. Extract and flatten birth.data_encr properties (with renaming)
+  if (pregnancy.birth && pregnancy.birth.data_encr) {
+    const birthDataEncrProps = extractDataEncrProperties(
+      pregnancy.birth.data_encr,
+      CONFIG.flatten.birthDataEncr
+    );
+    Object.assign(filtered, birthDataEncrProps);
+    
+    // Convert discharge_date from German format to ISO format
+    if (filtered.discharge_date) {
+      filtered.discharge_date = parseAndConvertDate(filtered.discharge_date);
+    }
   }
   
-  if (filtered.cares_after && Array.isArray(filtered.cares_after)) {
-    filtered.cares_after = filtered.cares_after.map(filterCareAfter);
+  // 4. Extract date_birth from the single child and flatten to pregnancy level
+  if (pregnancy.birth && pregnancy.birth.children && Array.isArray(pregnancy.birth.children) && pregnancy.birth.children.length === 1) {
+    const child = pregnancy.birth.children[0];
+    if (child.date_birth) {
+      // Convert German date format to ISO format for consistency
+      filtered.date_birth = parseAndConvertDate(child.date_birth);
+    }
   }
   
-  if (filtered.cares_after_phone && Array.isArray(filtered.cares_after_phone)) {
-    filtered.cares_after_phone = filtered.cares_after_phone.map(filterCareAfterPhone);
+  // 5. Filter cares_after array (at the end) and pass pregnancy data for calculations
+  if (pregnancy.cares_after && Array.isArray(pregnancy.cares_after)) {
+    filtered.cares_after = pregnancy.cares_after.map(care => 
+      filterCareAfter(care, filtered.date_birth, filtered.discharge_date, pregnancy.id)
+    );
+  }
+  
+  // 6. Filter cares_after_phone array (at the end)
+  if (pregnancy.cares_after_phone && Array.isArray(pregnancy.cares_after_phone)) {
+    filtered.cares_after_phone = pregnancy.cares_after_phone.map(care => 
+      filterCareAfterPhone(care, filtered.date_birth, filtered.discharge_date)
+    );
   }
   
   return filtered;
@@ -301,6 +462,10 @@ function filterClient(client) {
 // =============================================================================
 
 function processData(inputData) {
+  // Reset default breastfeed counter
+  filterCareAfter.defaultBreastfeedCount = 0;
+  filterCareAfter.defaultBreastfeedEntries = [];
+  
   const results = {
     totalClients: 0,
     successCount: 0,
@@ -308,6 +473,8 @@ function processData(inputData) {
     skippedClients: [],
     skippedPregnanciesCount: 0,
     skippedPregnancies: [],
+    defaultBreastfeedCount: 0,
+    defaultBreastfeedEntries: [],
   };
   
   const outputData = [];
@@ -367,6 +534,10 @@ function processData(inputData) {
     results.successCount++;
   }
   
+  // Capture default breastfeed count
+  results.defaultBreastfeedCount = filterCareAfter.defaultBreastfeedCount || 0;
+  results.defaultBreastfeedEntries = filterCareAfter.defaultBreastfeedEntries || [];
+  
   return { outputData, results };
 }
 
@@ -385,8 +556,19 @@ function generateResultsReport(results) {
     `Successfully Transformed: ${results.successCount}`,
     `Skipped Clients: ${results.skippedClientsCount}`,
     `Skipped Pregnancies: ${results.skippedPregnanciesCount}`,
+    `Default Breastfeed Type Used: ${results.defaultBreastfeedCount} times`,
     '',
   ];
+  
+  if (results.defaultBreastfeedEntries && results.defaultBreastfeedEntries.length > 0) {
+    lines.push('-'.repeat(60));
+    lines.push('PREGNANCIES WITH DEFAULT BREASTFEED TYPE');
+    lines.push('-'.repeat(60));
+    for (const entry of results.defaultBreastfeedEntries) {
+      lines.push(`  Pregnancy ID: ${entry.pregnancyId}, Care After ID: ${entry.careAfterId}`);
+    }
+    lines.push('');
+  }
   
   if (results.skippedPregnancies.length > 0) {
     lines.push('-'.repeat(60));
@@ -479,6 +661,7 @@ function main() {
   console.log(`  Transformed: ${results.successCount}`);
   console.log(`  Skipped clients: ${results.skippedClientsCount}`);
   console.log(`  Skipped pregnancies: ${results.skippedPregnanciesCount}`);
+  console.log(`  Default breastfeed type used: ${results.defaultBreastfeedCount} times`);
 }
 
 main();
