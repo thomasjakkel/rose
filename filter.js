@@ -162,6 +162,30 @@ function isValidValue(value, checkNonEmptyArray = false) {
 }
 
 /**
+ * Check if a date is exactly at the Unix epoch (January 1, 1970, 00:00:00 UTC)
+ * This indicates an invalid/uninitialized date
+ * Returns true if the date is on January 1, 1970, false otherwise
+ */
+function isEpochDate(dateString) {
+  if (!dateString) return false;
+  
+  try {
+    const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return false;
+    }
+    
+    // Check if the year is 1970 (regardless of timezone)
+    // This catches epoch dates in any timezone representation
+    return date.getFullYear() === 1970;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * Parse date string that can be in multiple formats and convert to ISO format
  * Supports: 'DD.MM.YYYY HH:MM', 'YYYY-MM-DD HH:MM:SS', etc.
  * Returns: ISO format string 'YYYY-MM-DD HH:MM:SS' or null
@@ -207,6 +231,7 @@ function validateEntity(entity, requiredFields, checkArrayNonEmpty = false) {
 
 /**
  * Validate a single pregnancy against required fields defined in CONFIG.required
+ * Only validates critical dates that would invalidate the entire pregnancy
  * Returns { valid: boolean, reason: string | null }
  */
 function validatePregnancy(pregnancy) {
@@ -237,10 +262,75 @@ function validatePregnancy(pregnancy) {
           reason: `Birth has ${pregnancy.birth.children.length} children (expected exactly 1 child)`
         };
       }
+      
+      // CRITICAL: Check if child's date_birth is at the Unix epoch (invalid default date)
+      // This is a critical date that invalidates the entire pregnancy
+      const child = pregnancy.birth.children[0];
+      if (child.date_birth && isEpochDate(child.date_birth)) {
+        return {
+          valid: false,
+          reason: `Child date_birth is at Unix epoch (invalid default date: ${child.date_birth})`
+        };
+      }
+    }
+    
+    // CRITICAL: Check discharge date from birth.data_encr
+    // This is a critical date that invalidates the entire pregnancy
+    if (pregnancy.birth.data_encr && pregnancy.birth.data_encr['mother-entlassungdatum']) {
+      if (isEpochDate(pregnancy.birth.data_encr['mother-entlassungdatum'])) {
+        return {
+          valid: false,
+          reason: `Discharge date is at Unix epoch (invalid default date: ${pregnancy.birth.data_encr['mother-entlassungdatum']})`
+        };
+      }
     }
   }
+  
+  // NOTE: Individual care entry dates are checked and filtered during processing,
+  // not during validation, so pregnancies with bad care dates are not rejected entirely
 
   return { valid: true, reason: null };
+}
+
+/**
+ * Filter out care entries with epoch dates and return valid entries plus filtered count
+ * Returns { validEntries: Array, filteredEntries: Array }
+ */
+function filterValidCareEntries(careEntries, pregnancyId, clientId, careType) {
+  const validEntries = [];
+  const filteredEntries = [];
+  
+  if (!careEntries || !Array.isArray(careEntries)) {
+    return { validEntries: [], filteredEntries: [] };
+  }
+  
+  for (const care of careEntries) {
+    let hasEpochDate = false;
+    let epochField = null;
+    
+    if (care.date_start && isEpochDate(care.date_start)) {
+      hasEpochDate = true;
+      epochField = 'date_start';
+    } else if (care.date_end && isEpochDate(care.date_end)) {
+      hasEpochDate = true;
+      epochField = 'date_end';
+    }
+    
+    if (hasEpochDate) {
+      filteredEntries.push({
+        clientId: clientId,
+        pregnancyId: pregnancyId,
+        careId: care.id,
+        careType: careType,
+        field: epochField,
+        value: care[epochField]
+      });
+    } else {
+      validEntries.push(care);
+    }
+  }
+  
+  return { validEntries, filteredEntries };
 }
 
 /**
@@ -486,6 +576,8 @@ function processData(inputData) {
     skippedClients: [],
     skippedPregnanciesCount: 0,
     skippedPregnancies: [],
+    filteredCareEntriesCount: 0,
+    filteredCareEntries: [],
     defaultBreastfeedCount: 0,
     defaultBreastfeedEntries: [],
   };
@@ -540,8 +632,41 @@ function processData(inputData) {
       continue;
     }
     
-    // Create a modified client with only valid pregnancies
-    const clientWithValidPregnancies = { ...client, pregnancies: validPregnancies };
+    // Filter out care entries with epoch dates from valid pregnancies
+    const cleanedPregnancies = validPregnancies.map(pregnancy => {
+      const cleaned = { ...pregnancy };
+      
+      // Filter cares_after
+      if (pregnancy.cares_after) {
+        const { validEntries, filteredEntries } = filterValidCareEntries(
+          pregnancy.cares_after,
+          pregnancy.id,
+          client.id,
+          'cares_after'
+        );
+        cleaned.cares_after = validEntries;
+        results.filteredCareEntriesCount += filteredEntries.length;
+        results.filteredCareEntries.push(...filteredEntries);
+      }
+      
+      // Filter cares_after_phone
+      if (pregnancy.cares_after_phone) {
+        const { validEntries, filteredEntries } = filterValidCareEntries(
+          pregnancy.cares_after_phone,
+          pregnancy.id,
+          client.id,
+          'cares_after_phone'
+        );
+        cleaned.cares_after_phone = validEntries;
+        results.filteredCareEntriesCount += filteredEntries.length;
+        results.filteredCareEntries.push(...filteredEntries);
+      }
+      
+      return cleaned;
+    });
+    
+    // Create a modified client with cleaned pregnancies
+    const clientWithValidPregnancies = { ...client, pregnancies: cleanedPregnancies };
     const filteredClient = filterClient(clientWithValidPregnancies);
     outputData.push(filteredClient);
     results.successCount++;
@@ -569,6 +694,7 @@ function generateResultsReport(results) {
     `Successfully Transformed: ${results.successCount}`,
     `Skipped Clients: ${results.skippedClientsCount}`,
     `Skipped Pregnancies: ${results.skippedPregnanciesCount}`,
+    `Filtered Care Entries (Epoch Dates): ${results.filteredCareEntriesCount}`,
     `Default Breastfeed Type Used: ${results.defaultBreastfeedCount} times`,
     '',
   ];
@@ -583,10 +709,30 @@ function generateResultsReport(results) {
     lines.push('');
   }
   
+  if (results.filteredCareEntries.length > 0) {
+    lines.push('-'.repeat(60));
+    lines.push('FILTERED CARE ENTRIES (EPOCH DATES)');
+    lines.push('-'.repeat(60));
+    lines.push('Individual care entries removed due to Unix epoch dates.');
+    lines.push('These entries were removed from their pregnancies, but the');
+    lines.push('pregnancies were kept with remaining valid care entries.');
+    lines.push('');
+    
+    for (const filtered of results.filteredCareEntries) {
+      lines.push(`  Client ID: ${filtered.clientId}, Pregnancy ID: ${filtered.pregnancyId}`);
+      lines.push(`    Care Type: ${filtered.careType}, Care ID: ${filtered.careId}`);
+      lines.push(`    Epoch Field: ${filtered.field} = ${filtered.value}`);
+      lines.push('');
+    }
+  }
+  
   if (results.skippedPregnancies.length > 0) {
     lines.push('-'.repeat(60));
-    lines.push('SKIPPED PREGNANCIES');
+    lines.push('SKIPPED PREGNANCIES (CRITICAL EPOCH DATES)');
     lines.push('-'.repeat(60));
+    lines.push('Entire pregnancies removed due to Unix epoch dates in');
+    lines.push('critical fields (birth date or discharge date).');
+    lines.push('');
     
     for (const skipped of results.skippedPregnancies) {
       lines.push(`  Client ID: ${skipped.clientId}, Pregnancy ID: ${skipped.pregnancyId}`);
@@ -731,6 +877,7 @@ function main() {
   console.log(`  Transformed: ${results.successCount}`);
   console.log(`  Skipped clients: ${results.skippedClientsCount}`);
   console.log(`  Skipped pregnancies: ${results.skippedPregnanciesCount}`);
+  console.log(`  Filtered care entries (epoch dates): ${results.filteredCareEntriesCount}`);
   console.log(`  Default breastfeed type used: ${results.defaultBreastfeedCount} times`);
 }
 
