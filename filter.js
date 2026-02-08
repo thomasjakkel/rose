@@ -410,6 +410,14 @@ function filterPregnancy(pregnancy) {
       CONFIG.flatten.pregnancyDataEncr
     );
     Object.assign(filtered, pregnancyDataEncrProps);
+    
+    // Convert grav and para from string to integer
+    if (filtered.grav !== undefined) {
+      filtered.grav = parseInt(filtered.grav, 10);
+    }
+    if (filtered.para !== undefined) {
+      filtered.para = parseInt(filtered.para, 10);
+    }
   }
   
   // 3. Extract and flatten birth.data_encr properties (with renaming)
