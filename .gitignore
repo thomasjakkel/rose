@@ -1,0 +1,21 @@
+# Output directory
+output/
+
+# Raw data directories
+raw_data/
+raw-data/
+data/
+*_raw_data/
+
+# Report files
+filter-report.txt
+mapping-report.txt
+
+# Intermediate JSON files
+filtered.json
+mapped.json
+final.csv
+
+# Editor files
+.vscode/
+.idea/
