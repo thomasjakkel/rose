@@ -1,0 +1,63 @@
+{
+  "blood_loss": {
+    "normal-500-ml": 1,
+    "vermehrt-500-ml": 2,
+    "atonie-i": 3,
+    "atonie-ii": 4,
+    "atonie-iii": 5,
+    "default": -1
+  },
+  "birth_mode": {
+    "spontan": 1,
+    "hausgeburt": 2,
+    "geburtshausgeburt-spontan": 3,
+    "ve": 4,
+    "forceps": 5,
+    "prim-wunschsectio": 6,
+    "prim-sectio": 7,
+    "prim-re-sectio": 8,
+    "prim-re-re-sectio": 9,
+    "sek-wunschsectio": 10,
+    "sek-sectio": 11,
+    "sek-re-sectio": 12,
+    "sek-re-re-sectio": 13,
+    "notsectio": 14,
+    "fehlgeburt": 15,
+    "totgeburt": 16,
+    "Interruptio": 17,
+    "abortion-mit-curettage": 18,
+    "unbekannt": 19,
+    "default": -1
+  },
+  "baby_food": {
+    "muttermilch": 1,
+    "pre-nahrung": 2,
+    "muttermilch-pre-nahrung": 3,
+    "default": -1
+  },
+  "breastfeed_type": {
+    "stillt": 1,
+    "primar-abgestillt": 2,
+    "abgestillt": 3,
+    "stillt-teilweise": 4,
+    "frau-pumpt-ab": 5,
+    "default": -1
+  },
+  "is_first_care": {
+    "0": 0,
+    "1": 1,
+    "default": -1
+  },
+  "is_breast_feeding": {
+    "false": 0,
+    "true": 1,
+    "default": -1
+  },
+  "_global_default": -1,
+  "_datetime_patterns": [
+    "date_start",
+    "date_end",
+    "discharge_date",
+    "date_birth"
+  ]
+}
