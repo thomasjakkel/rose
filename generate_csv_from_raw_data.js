@@ -2,12 +2,12 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// Usage: node pipeline.js <raw_data_folder>
+// Usage: node generate_csv_from_raw_data.js <raw_data_folder>
 const args = process.argv.slice(2);
 
 if (args.length === 0) {
-  console.error('Usage: node pipeline.js <raw_data_folder>');
-  console.error('\nExample: node pipeline.js raw_data/');
+  console.error('Usage: node generate_csv_from_raw_data.js <raw_data_folder>');
+  console.error('\nExample: node generate_csv_from_raw_data.js raw_data/');
   console.error('\nThis will process all JSON files in the folder and output results to output/');
   process.exit(1);
 }

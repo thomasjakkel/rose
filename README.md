@@ -10,7 +10,7 @@ Transform raw pregnancy healthcare data into analysis-ready CSV format through a
 2. Run the pipeline:
 
 ```bash
-node pipeline.js raw_data/
+node generate_csv_from_raw_data.js raw_data/
 ```
 
 3. Find all results in the `output/` folder:
@@ -39,7 +39,7 @@ Reports are saved alongside outputs: `filter-report.txt` and `mapping-report.txt
 
 ## What Each Script Does
 
-### pipeline.js (Orchestrator)
+### generate_csv_from_raw_data.js (Orchestrator)
 - **Input:** Folder with raw JSON files
 - **Output:** `output/` folder with all results
 - **Actions:** Runs all three scripts automatically, organizes outputs
@@ -129,15 +129,15 @@ After cloning and running the pipeline:
 
 ```bash
 git clone <repository-url>
-cd rose                      # Navigate into the repository
-node pipeline.js raw_data/   # Run from here
+cd rose                                        # Navigate into the repository
+node generate_csv_from_raw_data.js raw_data/  # Run from here
 ```
 
 Your directory structure:
 
 ```
 rose/                        # Repository root (you are here)
-├── pipeline.js              # One-command orchestrator
+├── generate_csv_from_raw_data.js  # One-command orchestrator
 ├── filter.js                # Stage 1: Filter & validate
 ├── map_values.js            # Stage 2: Map values
 ├── json_to_csv.js           # Stage 3: Export CSV
@@ -147,7 +147,7 @@ rose/                        # Repository root (you are here)
 │   ├── file1.json
 │   ├── file2.json
 │   └── ...
-└── output/                  # Pipeline creates this
+└── output/                  # generate_csv_from_raw_data.js creates this
     ├── final.csv            # ← Your analysis-ready data
     ├── filtered.json        # Intermediate: validated data
     ├── mapped.json          # Intermediate: mapped data
