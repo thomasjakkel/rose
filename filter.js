@@ -15,8 +15,8 @@
  *     (All .json files in the directory will be combined into one output)
  * 
  * OUTPUTS:
- *   - <output.json>  : Filtered dataset with only whitelisted properties
- *   - results.txt    : Processing report with statistics and skipped entries
+ *   - <output.json>      : Filtered dataset with only whitelisted properties
+ *   - filter-report.txt  : Processing report with statistics and skipped entries
  * 
  * CONFIGURATION:
  *   Edit the CONFIG object below to:
@@ -26,7 +26,7 @@
  * 
  * VALIDATION:
  *   - Pregnancies are validated individually against CONFIG.required
- *   - Invalid pregnancies are removed from the client but logged to results.txt
+ *   - Invalid pregnancies are removed from the client but logged to filter-report.txt
  *   - Clients are skipped only if they have no valid pregnancies remaining
  */
 
@@ -629,13 +629,13 @@ function main() {
     console.log('  - A single JSON file');
     console.log('  - A directory containing multiple JSON files (will be combined)');
     console.log('');
-    console.log('A results.txt file will be generated alongside the output file.');
+    console.log('A filter-report.txt file will be generated alongside the output file.');
     process.exit(1);
   }
   
   const inputPath = path.resolve(args[0]);
   const outputPath = path.resolve(args[1]);
-  const resultsPath = path.join(path.dirname(outputPath), 'results.txt');
+  const resultsPath = path.join(path.dirname(outputPath), 'filter-report.txt');
   
   // Check if input is a file or directory
   let inputData = [];

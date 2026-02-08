@@ -14,7 +14,7 @@
  * 
  * OUTPUTS:
  *   - <output.json>        : Transformed dataset with numeric values
- *   - results-mapping.txt  : Processing report with mapping statistics
+ *   - mapping-report.txt   : Processing report with mapping statistics
  * 
  * MAPPING RULES FORMAT (JSON):
  *   {
@@ -280,14 +280,14 @@ function main() {
     console.log('Usage: node map_values.js <input.json> <mapping_rules.json> <output.json>');
     console.log('');
     console.log('Maps string values to numeric values based on configurable rules.');
-    console.log('Generates results-mapping.txt with detailed statistics.');
+    console.log('Generates mapping-report.txt with detailed statistics.');
     process.exit(1);
   }
   
   const inputPath = path.resolve(args[0]);
   const mappingRulesPath = path.resolve(args[1]);
   const outputPath = path.resolve(args[2]);
-  const reportPath = path.join(path.dirname(outputPath), 'results-mapping.txt');
+  const reportPath = path.join(path.dirname(outputPath), 'mapping-report.txt');
   
   // Read input JSON
   console.log(`Reading input file: ${inputPath}`);
