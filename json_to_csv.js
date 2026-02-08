@@ -6,7 +6,13 @@
  * Converts the filtered pregnancy JSON data into a flattened CSV format.
  * 
  * USAGE:
- *   node json_to_csv.js <input.json> <output.csv>
+ *   node json_to_csv.js <input.json> <output.csv> [--skip-rows-for-values <value1,value2,...>]
+ * 
+ * OPTIONS:
+ *   --skip-rows-for-values  Comma-separated list of values to skip rows for.
+ *                           If any column in a row contains one of these values,
+ *                           the entire row is skipped.
+ *                           Example: --skip-rows-for-values -1,0
  * 
  * CSV STRUCTURE:
  *   - Each row represents one care visit (either in-person or phone)
@@ -87,10 +93,32 @@ const CSV_COLUMNS = [
 ];
 
 /**
- * Convert JSON data to CSV rows
+ * Check if a row should be skipped based on skip values
  */
-function jsonToCsvRows(data) {
+function shouldSkipRow(rowData, skipValues) {
+  if (!skipValues || skipValues.length === 0) {
+    return false;
+  }
+  
+  // Check if any column value matches any skip value
+  for (const col of CSV_COLUMNS) {
+    const value = String(rowData[col] ?? '');
+    if (skipValues.includes(value)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Convert JSON data to CSV rows
+ * @param {Array} data - Array of client data
+ * @param {Array} skipValues - Array of string values to skip rows for (optional)
+ */
+function jsonToCsvRows(data, skipValues = []) {
   const rows = [];
+  let skippedCount = 0;
   
   // Add header row
   rows.push(CSV_COLUMNS.map(escapeCsvValue).join(','));
@@ -131,6 +159,12 @@ function jsonToCsvRows(data) {
               is_breast_feeding: '', // Empty for in-person visits
             };
             
+            // Skip row if it contains any skip values
+            if (shouldSkipRow(rowData, skipValues)) {
+              skippedCount++;
+              continue;
+            }
+            
             // Build row in column order
             const row = CSV_COLUMNS.map(col => escapeCsvValue(rowData[col])).join(',');
             rows.push(row);
@@ -155,6 +189,12 @@ function jsonToCsvRows(data) {
               is_breast_feeding: care.is_breast_feeding,
             };
             
+            // Skip row if it contains any skip values
+            if (shouldSkipRow(rowData, skipValues)) {
+              skippedCount++;
+              continue;
+            }
+            
             // Build row in column order
             const row = CSV_COLUMNS.map(col => escapeCsvValue(rowData[col])).join(',');
             rows.push(row);
@@ -164,7 +204,7 @@ function jsonToCsvRows(data) {
     }
   }
   
-  return rows.join('\n');
+  return { csvContent: rows.join('\n'), skippedCount };
 }
 
 // =============================================================================
@@ -174,22 +214,51 @@ function jsonToCsvRows(data) {
 function main() {
   const args = process.argv.slice(2);
   
-  if (args.length < 2) {
-    console.log('Usage: node json_to_csv.js <input.json> <output.csv>');
+  // Parse arguments
+  let inputPath, outputPath;
+  let skipValues = [];
+  
+  // Find positional arguments and flags
+  const positionalArgs = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--skip-rows-for-values') {
+      if (i + 1 < args.length) {
+        skipValues = args[i + 1].split(',').map(v => v.trim());
+        i++; // Skip next arg
+      }
+    } else {
+      positionalArgs.push(args[i]);
+    }
+  }
+  
+  if (positionalArgs.length < 2) {
+    console.log('Usage: node json_to_csv.js <input.json> <output.csv> [--skip-rows-for-values <value1,value2,...>]');
     console.log('');
     console.log('Converts filtered pregnancy JSON data to CSV format.');
     console.log('Each row represents one care visit (in-person or phone).');
+    console.log('');
+    console.log('Options:');
+    console.log('  --skip-rows-for-values  Comma-separated list of values to skip rows for');
+    console.log('                          Example: --skip-rows-for-values -1,0');
     process.exit(1);
   }
   
-  const inputPath = path.resolve(args[0]);
-  const outputPath = path.resolve(args[1]);
+  inputPath = positionalArgs[0];
+  outputPath = positionalArgs[1];
+  
+  const resolvedInputPath = path.resolve(inputPath);
+  const resolvedOutputPath = path.resolve(outputPath);
+  
+  // Show skip values if provided
+  if (skipValues.length > 0) {
+    console.log(`Skip values configured: [${skipValues.join(', ')}]`);
+  }
   
   // Read input JSON
-  console.log(`Reading input file: ${inputPath}`);
+  console.log(`Reading input file: ${resolvedInputPath}`);
   let inputData;
   try {
-    const rawData = fs.readFileSync(inputPath, 'utf8');
+    const rawData = fs.readFileSync(resolvedInputPath, 'utf8');
     inputData = JSON.parse(rawData);
   } catch (err) {
     console.error(`Error reading input file: ${err.message}`);
@@ -204,12 +273,12 @@ function main() {
   
   // Convert to CSV
   console.log('Converting to CSV...');
-  const csvContent = jsonToCsvRows(inputData);
+  const { csvContent, skippedCount } = jsonToCsvRows(inputData, skipValues);
   
   // Write output CSV
-  console.log(`Writing output file: ${outputPath}`);
+  console.log(`Writing output file: ${resolvedOutputPath}`);
   try {
-    fs.writeFileSync(outputPath, csvContent, 'utf8');
+    fs.writeFileSync(resolvedOutputPath, csvContent, 'utf8');
   } catch (err) {
     console.error(`Error writing output file: ${err.message}`);
     process.exit(1);
@@ -220,7 +289,10 @@ function main() {
   console.log('');
   console.log('Conversion complete!');
   console.log(`  Total rows: ${rowCount} (excluding header)`);
-  console.log(`  Output: ${outputPath}`);
+  if (skippedCount > 0) {
+    console.log(`  Skipped rows: ${skippedCount}`);
+  }
+  console.log(`  Output: ${resolvedOutputPath}`);
 }
 
 main();

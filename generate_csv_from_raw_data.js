@@ -2,17 +2,34 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// Usage: node generate_csv_from_raw_data.js <raw_data_folder>
+// Usage: node generate_csv_from_raw_data.js <raw_data_folder> [--skip-rows-for-values <value1,value2,...>]
 const args = process.argv.slice(2);
 
-if (args.length === 0) {
-  console.error('Usage: node generate_csv_from_raw_data.js <raw_data_folder>');
-  console.error('\nExample: node generate_csv_from_raw_data.js raw_data/');
-  console.error('\nThis will process all JSON files in the folder and output results to output/');
-  process.exit(1);
+// Parse arguments
+let rawDataFolder;
+let skipRowsForValues = null;
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--skip-rows-for-values') {
+    if (i + 1 < args.length) {
+      skipRowsForValues = args[i + 1];
+      i++; // Skip next arg
+    }
+  } else if (!rawDataFolder) {
+    rawDataFolder = args[i];
+  }
 }
 
-const rawDataFolder = args[0];
+if (!rawDataFolder) {
+  console.error('Usage: node generate_csv_from_raw_data.js <raw_data_folder> [--skip-rows-for-values <value1,value2,...>]');
+  console.error('\nExample: node generate_csv_from_raw_data.js raw_data/');
+  console.error('         node generate_csv_from_raw_data.js raw_data/ --skip-rows-for-values -1,0');
+  console.error('\nThis will process all JSON files in the folder and output results to output/');
+  console.error('\nOptions:');
+  console.error('  --skip-rows-for-values  Comma-separated list of values to skip rows for in CSV output');
+  console.error('                          Example: --skip-rows-for-values -1,0');
+  process.exit(1);
+}
 const outputDir = 'output';
 const roseDir = path.join(__dirname);
 
@@ -65,16 +82,19 @@ try {
 
   // Step 3: Export to CSV
   console.log('\n[3/3] Exporting to CSV...');
-  execSync(
-    `node "${path.join(roseDir, 'json_to_csv.js')}" "${mappedJson}" "${finalCsv}"`,
-    { stdio: 'inherit', cwd: process.cwd() }
-  );
+  const csvCmd = skipRowsForValues 
+    ? `node "${path.join(roseDir, 'json_to_csv.js')}" "${mappedJson}" "${finalCsv}" --skip-rows-for-values "${skipRowsForValues}"`
+    : `node "${path.join(roseDir, 'json_to_csv.js')}" "${mappedJson}" "${finalCsv}"`;
+  execSync(csvCmd, { stdio: 'inherit', cwd: process.cwd() });
 
   console.log('\n=== Pipeline Complete ===');
   console.log(`\nResults saved to ${outputDir}/:`);
   console.log('  • filtered.json      - Validated and flattened data');
   console.log('  • mapped.json        - Value-mapped data');
   console.log('  • final.csv          - Final CSV output');
+  if (skipRowsForValues) {
+    console.log(`                         (rows with values [${skipRowsForValues}] were skipped)`);
+  }
   console.log('  • filter-report.txt  - Filtering statistics');
   console.log('  • mapping-report.txt - Mapping statistics');
 

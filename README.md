@@ -8,9 +8,13 @@ Transform raw pregnancy healthcare data into analysis-ready CSV format through a
 
 1. Put your raw JSON files in a folder (e.g., `raw_data/`)
 2. Run the pipeline:
-
+  
 ```bash
-node generate_csv_from_raw_data.js raw_data/
+  node generate_csv_from_raw_data.js raw_data/
+
+  # Optional: Skip CSV rows with specific values (e.g., -1 for unmapped defaults)
+  node generate_csv_from_raw_data.js raw_data/ --skip-rows-for-values -1
+  node generate_csv_from_raw_data.js raw_data/ --skip-rows-for-values -1,0
 ```
 
 3. Find all results in the `output/` folder:
@@ -33,6 +37,9 @@ node map_values.js output/filtered.json mapping_rules.json output/mapped.json
 
 # Step 3: Export to CSV
 node json_to_csv.js output/mapped.json output/final.csv
+
+# Optional: Skip rows where any column has specific values
+node json_to_csv.js output/mapped.json output/final.csv --skip-rows-for-values -1,0
 ```
 
 Reports are saved alongside outputs: `filter-report.txt` and `mapping-report.txt`
@@ -43,11 +50,17 @@ Reports are saved alongside outputs: `filter-report.txt` and `mapping-report.txt
 - **Input:** Folder with raw JSON files
 - **Output:** `output/` folder with all results
 - **Actions:** Runs all three scripts automatically, organizes outputs
+- **Options:**
+  - `--skip-rows-for-values <values>` - Pass comma-separated values to skip rows in CSV (e.g., `-1,0`)
 
 ### filter.js
 - **Input:** Raw pregnancy JSON data (file or folder)
 - **Output:** `filtered.json`, `filter-report.txt`
 - **Actions:** Validates pregnancies, removes invalid data, flattens nested structures, calculates time metrics
+- **Data Quality:**
+  - Detects Unix epoch dates (January 1, 1970) as invalid timestamps
+  - Skips entire pregnancies if critical dates (birth_date, discharge_date) are at epoch
+  - Filters individual care entries if their dates are at epoch (keeps rest of pregnancy)
 
 ### map_values.js
 - **Input:** Filtered JSON + `mapping_rules.json`
@@ -58,6 +71,9 @@ Reports are saved alongside outputs: `filter-report.txt` and `mapping-report.txt
 - **Input:** Mapped JSON
 - **Output:** `final.csv`
 - **Actions:** Flattens data into table format (one row per care visit)
+- **Options:**
+  - `--skip-rows-for-values <values>` - Skip rows where any column matches these values (comma-separated)
+  - Useful for excluding rows with unmapped defaults (e.g., `-1`) from analysis
 
 ## Extending Value Mappings
 
@@ -80,7 +96,8 @@ Changes take effect immediately on next run.
 
 ### filter-report.txt
 Shows what was filtered out and why:
-- Skipped clients/pregnancies
+- **Filtered Care Entries:** Individual care visits removed due to Unix epoch dates (Jan 1, 1970)
+- **Skipped Pregnancies:** Complete pregnancies rejected due to critical dates at epoch (birth/discharge)
 - Validation failures
 - Default value usage
 
@@ -117,6 +134,17 @@ Each row = one care visit (in-person or phone call)
 
 **Values not in CSV**
 → Edit `CSV_COLUMNS` array in `json_to_csv.js`
+
+**Pregnancies with dates at January 1, 1970**
+→ These are filtered automatically as invalid Unix epoch timestamps. Check `filter-report.txt` for details:
+  - Critical dates (birth/discharge) → entire pregnancy skipped
+  - Care entry dates → only that entry filtered, rest of data retained
+
+**CSV contains rows with -1 values**
+→ Use `--skip-rows-for-values -1` flag to exclude rows with unmapped defaults from final CSV:
+```bash
+node generate_csv_from_raw_data.js raw_data/ --skip-rows-for-values -1
+```
 
 ## Requirements
 
